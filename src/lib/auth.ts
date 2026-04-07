@@ -1,5 +1,5 @@
 const ADMIN_KEY = "rosterly_admin";
-const ADMIN_PASSWORD = "admin1234"; // change this to whatever you want
+const ADMIN_PASSWORD = process.env.NEXT_PUBLIC_ADMIN_PASSWORD ?? "admin1234"; // change this to whatever you want
 
 export function isAdmin(): boolean {
   if (typeof window === "undefined") return false;

@@ -1,4 +1,4 @@
-export type Department = "kitchen" | "waitress";
+export type Department = "kitchen" | "bar" | "store" | "snooker" | "waitress";
 
 export type ShiftValue = "3pm" | "6pm" | "8pm" | "off";
 
@@ -16,7 +16,7 @@ export interface Staff {
 
 export interface Roster {
   id: string;
-  week_start: string; // ISO date string e.g. "2025-01-06"
+  week_start: string;
   generated_at: string;
   is_published: boolean;
 }
@@ -40,7 +40,6 @@ export interface SwapRequest {
   created_at: string;
 }
 
-// In-memory roster map used by the algorithm before saving to DB
 export type RosterMap = Record<string, Record<DayKey, ShiftValue>>;
 
 export interface DepartmentConfig {
@@ -48,3 +47,14 @@ export interface DepartmentConfig {
   max_off_override: number | null;
   six_pm_quota: number;
 }
+
+export const LATE_FRIDAY_DEPTS: Department[] = ["bar", "store", "snooker", "waitress"];
+export const EARLY_FRIDAY_DEPTS: Department[] = ["kitchen"];
+
+export const DEPT_LABELS: Record<Department, string> = {
+  kitchen:   "Kitchen",
+  bar:       "Bar",
+  store:     "Store",
+  snooker:   "Snooker",
+  waitress:  "Waitresses",
+};

@@ -1,10 +1,11 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { generateRoster, DAYS } from "@/lib/rosterAlgorithm";
 import { validateOverride } from "@/lib/rosterValidation";
-import { Staff, RosterMap, ShiftValue, DayKey, RosterEntry, Roster } from "@/types";
+import { Staff, RosterMap, ShiftValue, DayKey, RosterEntry, Roster, DEPT_LABELS, Department } from "@/types";
 import { useAdmin } from "@/context/AdminContext";
 
 const SHIFT_CLASS: Record<ShiftValue, string> = {
@@ -51,20 +52,50 @@ function ShiftBadge({ value }: { value: ShiftValue }) {
   return <span className={`shift-pill ${SHIFT_CLASS[value]}`} style={{ cursor: "default" }}>{value}</span>;
 }
 
+function getMonday(date = new Date()): string {
+  const d = new Date(date);
+  const diff = d.getDay() === 0 ? -6 : 1 - d.getDay();
+  d.setDate(d.getDate() + diff);
+  return d.toISOString().split("T")[0];
+}
+
+function getWeeksList(): { value: string; label: string }[] {
+  const weeks = [];
+  const today = new Date();
+  for (let i = -8; i <= 4; i++) {
+    const d = new Date(today);
+    d.setDate(d.getDate() + i * 7);
+    const monday = getMonday(d);
+    const label = i === 0 ? `This week (${monday})` : 
+                  i === 1 ? `Next week (${monday})` :
+                  i === -1 ? `Last week (${monday})` :
+                  `Week of ${monday}`;
+    weeks.push({ value: monday, label });
+  }
+  return weeks.reverse();
+}
+
 export default function RosterPage() {
   const { admin } = useAdmin();
-  const [staff, setStaff]               = useState<Staff[]>([]);
-  const [roster, setRoster]             = useState<RosterMap | null>(null);
-  const [savedRoster, setSavedRoster]   = useState<Roster | null>(null);
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const weeksList = getWeeksList();
+
+  const [staff, setStaff] = useState<Staff[]>([]);
+  const [roster, setRoster] = useState<RosterMap | null>(null);
+  const [savedRoster, setSavedRoster] = useState<Roster | null>(null);
   const [savedEntries, setSavedEntries] = useState<RosterEntry[]>([]);
-  const [loading, setLoading]           = useState(false);
-  const [saving, setSaving]             = useState(false);
-  const [error, setError]               = useState<string | null>(null);
-  const [cellError, setCellError]       = useState<string | null>(null);
-  const [weekStart, setWeekStart]       = useState<string>(getMonday());
+  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [cellError, setCellError] = useState<string | null>(null);
+  const [weekStart, setWeekStart] = useState<string>(() => {
+    const urlWeek = searchParams.get("week");
+    return urlWeek && weeksList.some(w => w.value === urlWeek) ? urlWeek : getMonday();
+  });
 
   useEffect(() => { fetchStaff(); }, []);
-  useEffect(() => { if (staff.length > 0) fetchLastRoster(); }, [staff]);
+  useEffect(() => { if (staff.length > 0) fetchRosterForWeek(weekStart); }, [staff, weekStart]);
 
   async function fetchStaff() {
     const { data, error } = await supabase.from("staff").select("*").eq("active", true);
@@ -72,19 +103,27 @@ export default function RosterPage() {
     setStaff(data as Staff[]);
   }
 
-  const fetchLastRoster = useCallback(async () => {
+  const fetchRosterForWeek = useCallback(async (week: string) => {
     const { data: rosterRow } = await supabase
-      .from("rosters").select("*")
-      .order("generated_at", { ascending: false }).limit(1).single();
-    if (!rosterRow) return;
+      .from("rosters")
+      .select("*")
+      .eq("week_start", week)
+      .maybeSingle();
+      
+    if (!rosterRow) {
+      setSavedRoster(null);
+      setSavedEntries([]);
+      setRoster(null);
+      return;
+    }
 
     const { data: entries } = await supabase
-      .from("roster_entries").select("*").eq("roster_id", rosterRow.id);
-    if (!entries) return;
-
+      .from("roster_entries")
+      .select("*")
+      .eq("roster_id", rosterRow.id);
+      
     setSavedRoster(rosterRow as Roster);
     setSavedEntries(entries as RosterEntry[]);
-    setWeekStart(rosterRow.week_start);
 
     const map: RosterMap = {};
     for (const e of entries as RosterEntry[]) {
@@ -94,14 +133,11 @@ export default function RosterPage() {
     setRoster(map);
   }, []);
 
-  function getMonday(): string {
-    const d = new Date();
-    const diff = d.getDay() === 0 ? -6 : 1 - d.getDay();
-    d.setDate(d.getDate() + diff);
-    return d.toISOString().split("T")[0];
-  }
-
   function handleGenerate() {
+    if (savedRoster) {
+      const ok = confirm("A saved roster exists for this week. Generate new one?");
+      if (!ok) return;
+    }
     setError(null); setCellError(null); setLoading(true);
     try {
       setRoster(generateRoster(staff));
@@ -138,36 +174,48 @@ export default function RosterPage() {
         supabase.from("roster_entries")
           .update({ shift: value, is_manual_override: true })
           .eq("id", entry.id)
-          .then(() => fetchLastRoster());
+          .then(() => fetchRosterForWeek(weekStart));
       }
     }
   }
 
   async function handleSave() {
-    if (!roster) return;
-    setSaving(true); setError(null);
+  if (!roster) return;
+  setSaving(true); setError(null);
 
-    const { data: rosterRow, error: rErr } = await supabase
-      .from("rosters").insert({ week_start: weekStart, is_published: false }).select().single();
-    if (rErr) { setError(rErr.message); setSaving(false); return; }
+  // Delete existing roster for this week to avoid duplicates
+  await supabase.from("rosters").delete().eq("week_start", weekStart);
 
-    const entries = Object.entries(roster).flatMap(([staffId, days]) =>
-      DAYS.map(day => ({
-        roster_id: rosterRow.id, staff_id: staffId,
-        day, shift: days[day as DayKey], is_manual_override: false,
-      }))
-    );
+  const { data: rosterRow, error: rErr } = await supabase
+    .from("rosters")
+    .insert({ week_start: weekStart, is_published: false })
+    .select()
+    .single();
+    
+  if (rErr) { setError(rErr.message); setSaving(false); return; }
 
-    const { error: eErr } = await supabase.from("roster_entries").insert(entries);
-    if (eErr) { setError(eErr.message); setSaving(false); return; }
+  const entries = Object.entries(roster).flatMap(([staffId, days]) =>
+    DAYS.map(day => ({
+      roster_id: rosterRow.id, staff_id: staffId,
+      day, shift: days[day as DayKey], is_manual_override: false,
+    }))
+  );
 
-    setSavedRoster(rosterRow);
-    setSaving(false);
-    fetchLastRoster();
-  }
+  const { error: eErr } = await supabase.from("roster_entries").insert(entries);
+  if (eErr) { setError(eErr.message); setSaving(false); return; }
 
-  const kitchen  = staff.filter(s => s.department === "kitchen");
-  const waitress = staff.filter(s => s.department === "waitress");
+  // Update state immediately with the saved roster
+  setSavedRoster(rosterRow);
+  setSaving(false);
+  setTimeout(() => {
+    fetchRosterForWeek(weekStart);
+  }, 100);
+}
+
+  const ALL_DEPTS: Department[] = ["kitchen", "bar", "store", "snooker", "waitress"];
+  const deptStaff = (d: Department) => staff.filter(s => s.department === d);
+
+  const isFutureWeek = weekStart > getMonday();
 
   return (
     <div className="page">
@@ -175,49 +223,82 @@ export default function RosterPage() {
         <div>
           <h1 className="page-title">Weekly Roster</h1>
           <p className="page-subtitle">
-            {savedRoster
-              ? `Week of ${savedRoster.week_start}`
-              : "No roster saved yet"}
+            {savedRoster ? `Saved: ${savedRoster.week_start}` : 
+             roster ? `Generated (unsaved): ${weekStart}` : 
+             `Week of ${weekStart}`}
           </p>
         </div>
 
         {admin && (
           <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <label className="form-label" style={{ whiteSpace: "nowrap" }}>Week of</label>
-              <input type="date" value={weekStart}
-                onChange={e => setWeekStart(e.target.value)}
-                className="form-input" style={{ width: "auto" }} />
+              <label className="form-label" style={{ whiteSpace: "nowrap" }}>Week</label>
+              <select 
+                value={weekStart} 
+                onChange={e => {
+                  const newWeek = e.target.value;
+                  setWeekStart(newWeek);
+                  router.push(`?week=${newWeek}`, { scroll: false });
+                }}
+                className="form-select" 
+                style={{ width: "auto", minWidth: "200px" }}
+              >
+                {weeksList.map(w => (
+                  <option key={w.value} value={w.value}>{w.label}</option>
+                ))}
+              </select>
             </div>
+            
             <button className="btn btn-primary" onClick={handleGenerate}
               disabled={loading || staff.length === 0}>
-              {loading ? "Generating…" : "Generate roster"}
+              {loading ? "Generating…" : (savedRoster ? "Regenerate" : "Generate")}
             </button>
+            
             {roster && !savedRoster && (
-              <button className="btn btn-secondary" onClick={handleSave} disabled={saving}>
-                {saving ? "Saving…" : "Save roster"}
-              </button>
-            )}
+  <button className="btn btn-secondary" onClick={handleSave} disabled={saving}>
+    {saving ? "Saving…" : "Save roster"}
+  </button>
+          )}
+          {savedRoster && (
+            <button 
+              className="btn btn-success" 
+              onClick={async () => {
+                await supabase.from("rosters").update({ is_published: true }).eq("id", savedRoster.id);
+                setSavedRoster({ ...savedRoster, is_published: true });
+              }}
+              disabled={savedRoster.is_published}
+              style={{ 
+                background: savedRoster.is_published ? "var(--success)" : "var(--primary)",
+                opacity: savedRoster.is_published ? 0.7 : 1 
+              }}
+            >
+              {savedRoster.is_published ? "✓ Published" : "Publish"}
+            </button>
+          )}
           </div>
         )}
       </div>
+
+      {isFutureWeek && !savedRoster && !roster && (
+        <div className="alert alert-info" style={{ marginBottom: "1rem" }}>
+          This is a future week. Generate a roster to get started.
+        </div>
+      )}
 
       <div className="stat-row">
         <div className="stat-pill">
           <span className="stat-pill-label">Total staff</span>
           <span className="stat-pill-value">{staff.length}</span>
         </div>
-        <div className="stat-pill">
-          <span className="stat-pill-label">Kitchen</span>
-          <span className="stat-pill-value">{kitchen.length}</span>
-        </div>
-        <div className="stat-pill">
-          <span className="stat-pill-label">Waitresses</span>
-          <span className="stat-pill-value">{waitress.length}</span>
-        </div>
+        {ALL_DEPTS.map(d => (
+          <div key={d} className="stat-pill">
+            <span className="stat-pill-label">{DEPT_LABELS[d]}</span>
+            <span className="stat-pill-value">{deptStaff(d).length}</span>
+          </div>
+        ))}
       </div>
 
-      {error     && <div className="alert alert-error">{error}</div>}
+      {error && <div className="alert alert-error">{error}</div>}
       {cellError && <div className="alert alert-warning">{cellError}</div>}
 
       {!roster && staff.length > 0 && (
@@ -226,17 +307,17 @@ export default function RosterPage() {
             No roster for this week yet.
           </p>
           <p style={{ color: "var(--text-muted)", fontSize: "14px" }}>
-            {admin ? "Hit Generate roster to build the week." : "Check back once the manager publishes the roster."}
+            {admin ? "Hit Generate to build the week." : "Check back once the manager publishes the roster."}
           </p>
         </div>
       )}
 
       {roster && staff.length > 0 && (
         <div style={{ display: "flex", flexDirection: "column", gap: "2.5rem" }}>
-          <RosterSection title="Kitchen"    staffList={kitchen}
-            roster={roster} admin={admin} onEdit={handleCellEdit} />
-          <RosterSection title="Waitresses" staffList={waitress}
-            roster={roster} admin={admin} onEdit={handleCellEdit} />
+          {ALL_DEPTS.map(d => (
+            <RosterSection key={d} title={DEPT_LABELS[d]} staffList={deptStaff(d)}
+              roster={roster} admin={admin} onEdit={handleCellEdit} />
+          ))}
         </div>
       )}
     </div>
@@ -249,6 +330,16 @@ function RosterSection({ title, staffList, roster, admin, onEdit }: {
   onEdit: (staffId: string, day: DayKey, value: ShiftValue) => void;
 }) {
   if (!staffList.length) return null;
+
+  const counts: Record<DayKey, Record<ShiftValue, number>> = {} as never;
+  for (const d of DAYS) {
+    counts[d] = { "3pm": 0, "6pm": 0, "8pm": 0, "off": 0 };
+    for (const s of staffList) {
+      const shift = roster[s.id]?.[d];
+      if (shift) counts[d][shift]++;
+    }
+  }
+
   return (
     <div>
       <div style={{ display: "flex", alignItems: "baseline", gap: "10px", marginBottom: "1rem" }}>
@@ -282,6 +373,30 @@ function RosterSection({ title, staffList, roster, admin, onEdit }: {
               </tr>
             ))}
           </tbody>
+          <tfoot>
+            <tr style={{ borderTop: "2px solid var(--border-strong)", background: "var(--bg-muted)" }}>
+              <td style={{ padding: "10px 20px", fontSize: "11px", fontWeight: 700, color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+                On shift
+              </td>
+              {DAYS.map(d => {
+                const total = (["3pm","6pm","8pm"] as ShiftValue[]).reduce((sum, sh) => sum + counts[d][sh], 0);
+                const parts = (["3pm","6pm","8pm"] as ShiftValue[])
+                  .filter(sh => counts[d][sh] > 0)
+                  .map(sh => `${counts[d][sh]}×${sh}`)
+                  .join(" · ");
+                return (
+                  <td key={d} style={{ padding: "10px 8px", textAlign: "center" }}>
+                    <span style={{ fontSize: "16px", fontWeight: 800, color: "var(--text-primary)", display: "block", lineHeight: 1 }}>
+                      {total}
+                    </span>
+                    <span style={{ fontSize: "10px", color: "var(--text-muted)", fontWeight: 500, marginTop: "3px", display: "block", whiteSpace: "nowrap" }}>
+                      {parts}
+                    </span>
+                  </td>
+                );
+              })}
+            </tr>
+          </tfoot>
         </table>
       </div>
     </div>

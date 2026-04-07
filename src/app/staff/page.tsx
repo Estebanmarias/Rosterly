@@ -2,14 +2,14 @@
 
 import { useEffect, useState } from "react";
 import { supabase } from "@/lib/supabase";
-import { Staff, Department } from "@/types";
-
+import { Staff, Department, DEPT_LABELS } from "@/types";
 import { useAdmin } from "@/context/AdminContext";
 
+const ALL_DEPTS: Department[] = ["kitchen", "bar", "store", "snooker", "waitress"];
 const EMPTY_FORM = { name: "", department: "waitress" as Department };
 
 export default function StaffPage() {
-  const { admin } = useAdmin();
+  const { admin }             = useAdmin();
   const [staff, setStaff]     = useState<Staff[]>([]);
   const [form, setForm]       = useState(EMPTY_FORM);
   const [editId, setEditId]   = useState<string | null>(null);
@@ -61,97 +61,122 @@ export default function StaffPage() {
 
   function handleCancel() { setEditId(null); setForm(EMPTY_FORM); setError(null); }
 
-  const kitchen  = staff.filter(s => s.department === "kitchen");
-  const waitress = staff.filter(s => s.department === "waitress");
-  const active   = staff.filter(s => s.active).length;
+  const active = staff.filter(s => s.active).length;
 
   return (
     <div className="page-sm">
       <div className="page-header">
         <div>
           <h1 className="page-title">Staff</h1>
-          <p className="page-subtitle">{active} active · {kitchen.length} kitchen · {waitress.length} waitresses</p>
+          <p className="page-subtitle">
+            {active} active ·{" "}
+            {ALL_DEPTS.map(d => `${staff.filter(s => s.department === d).length} ${DEPT_LABELS[d]?.toLowerCase() || d}`).join(" · ")}
+          </p>
         </div>
       </div>
 
-      {/* Form — admin only */}
+      {/* Add / Edit form — admin only */}
       {admin && (
-      <div className="card" style={{ marginBottom: "2rem" }}>
-        <p className="card-title">{editId ? "Edit staff member" : "Add staff member"}</p>
-        <div className="input-row">
-          <div className="form-group" style={{ flex: 2 }}>
-            <label className="form-label">Name</label>
-            <input
-              type="text" value={form.name} placeholder="Full name"
-              onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
-              onKeyDown={e => e.key === "Enter" && handleSubmit()}
-              className="form-input"
-            />
+        <div className="card" style={{ marginBottom: "2rem" }}>
+          <p className="card-title">{editId ? "Edit staff member" : "Add staff member"}</p>
+          <div className="input-row">
+            <div className="form-group" style={{ flex: 2 }}>
+              <label className="form-label">Name</label>
+              <input
+                type="text" value={form.name} placeholder="Full name"
+                onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
+                onKeyDown={e => e.key === "Enter" && handleSubmit()}
+                className="form-input"
+              />
+            </div>
+            <div className="form-group">
+              <label className="form-label">Department</label>
+              <select
+                value={form.department}
+                onChange={e => setForm(f => ({ ...f, department: e.target.value as Department }))}
+                className="form-select"
+              >
+                {ALL_DEPTS.map(d => (
+                  <option key={d} value={d}>{DEPT_LABELS[d]}</option>
+                ))}
+              </select>
+            </div>
+            <div style={{ display: "flex", gap: "8px", paddingBottom: "1px" }}>
+              <button className="btn btn-primary" onClick={handleSubmit} disabled={loading}>
+                {loading ? "Saving…" : editId ? "Update" : "Add staff"}
+              </button>
+              {editId && (
+                <button className="btn btn-secondary" onClick={handleCancel}>Cancel</button>
+              )}
+            </div>
           </div>
-          <div className="form-group">
-            <label className="form-label">Department</label>
-            <select
-              value={form.department}
-              onChange={e => setForm(f => ({ ...f, department: e.target.value as Department }))}
-              className="form-select"
-            >
-              <option value="waitress">Waitress</option>
-              <option value="kitchen">Kitchen</option>
-            </select>
-          </div>
-          <div style={{ display: "flex", gap: "8px", paddingBottom: "1px" }}>
-            <button className="btn btn-primary" onClick={handleSubmit} disabled={loading}>
-              {loading ? "Saving…" : editId ? "Update" : "Add staff"}
-            </button>
-            {editId && (
-              <button className="btn btn-secondary" onClick={handleCancel}>Cancel</button>
-            )}
-          </div>
+          {error && <p style={{ marginTop: "10px", fontSize: "13px", color: "#dc2626" }}>{error}</p>}
         </div>
-        {error && <p style={{ marginTop: "10px", fontSize: "13px", color: "#dc2626" }}>{error}</p>}
-      </div>
       )}
 
-      {/* Kitchen */}
-      <StaffSection
-        title="Kitchen" dept="kitchen" list={kitchen}
-        onEdit={handleEdit} onToggle={handleToggleActive} onDelete={handleDelete}
-      />
-
-      <hr className="divider" />
-
-      {/* Waitresses */}
-      <StaffSection
-        title="Waitresses" dept="waitress" list={waitress}
-        onEdit={handleEdit} onToggle={handleToggleActive} onDelete={handleDelete}
-      />
+      {/* Department sections */}
+      {ALL_DEPTS.map((dept, i) => {
+        const list = staff.filter(s => s.department === dept);
+        return (
+          <div key={dept}>
+            <StaffSection
+              title={DEPT_LABELS[dept]}
+              dept={dept}
+              list={list}
+              admin={admin}
+              onEdit={handleEdit}
+              onToggle={handleToggleActive}
+              onDelete={handleDelete}
+            />
+            {i < ALL_DEPTS.length - 1 && <hr className="divider" />}
+          </div>
+        );
+      })}
     </div>
   );
 }
 
-function StaffSection({ title, list, admin, onEdit, onToggle, onDelete }: {
-  title: string; dept: Department; list: Staff[]; admin: boolean;
+function StaffSection({ title, dept, list, admin, onEdit, onToggle, onDelete }: {
+  title: string;
+  dept: Department;
+  list: Staff[];
+  admin: boolean;
   onEdit: (s: Staff) => void;
   onToggle: (s: Staff) => void;
   onDelete: (id: string) => void;
 }) {
+    const avatarColors: Record<Department, { bg: string; color: string }> = {
+    kitchen:  { bg: "#fef3c7", color: "#b45309" },
+    bar:      { bg: "#dbeafe", color: "#1d4ed8" },
+    store:    { bg: "#bfdbfe", color: "#1e40af" },
+    snooker:  { bg: "#dcfce7", color: "#166534" },
+    waitress: { bg: "#ede9fe", color: "#6d28d9" },
+  };
+  const { bg, color } = avatarColors[dept];
+
   return (
     <div style={{ marginBottom: "1.5rem" }}>
       <div style={{ display: "flex", alignItems: "baseline", gap: "10px", marginBottom: "0.75rem" }}>
         <h2 style={{ fontSize: "18px", fontWeight: 800, margin: 0 }}>{title}</h2>
-        <span style={{ fontSize: "13px", color: "var(--text-muted)", fontWeight: 600 }}>{list.length} staff</span>
+        <span style={{ fontSize: "13px", color: "var(--text-muted)", fontWeight: 600 }}>
+          {list.length} staff
+        </span>
       </div>
       {list.length === 0 ? (
-        <p style={{ color: "var(--text-muted)", fontSize: "14px" }}>No {title.toLowerCase()} added yet.</p>
+        <p style={{ color: "var(--text-muted)", fontSize: "14px" }}>
+          No {title.toLowerCase()} added yet.
+        </p>
       ) : (
-        <div style={{ border: "1.5px solid var(--border)", borderRadius: "var(--radius-lg)", overflow: "hidden", boxShadow: "var(--shadow-sm)" }}>
+        <div style={{
+          border: "1.5px solid var(--border)", borderRadius: "var(--radius-lg)",
+          overflow: "hidden", boxShadow: "var(--shadow-sm)",
+        }}>
           {list.map(s => (
             <div key={s.id} className="staff-row">
               <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
                 <div style={{
                   width: 36, height: 36, borderRadius: "50%",
-                  background: s.department === "kitchen" ? "#fef3c7" : "#ede9fe",
-                  color: s.department === "kitchen" ? "#b45309" : "#6d28d9",
+                  background: bg, color,
                   display: "flex", alignItems: "center", justifyContent: "center",
                   fontWeight: 800, fontSize: "13px", flexShrink: 0,
                 }}>
@@ -165,20 +190,24 @@ function StaffSection({ title, list, admin, onEdit, onToggle, onDelete }: {
                   }}>
                     {s.name}
                   </p>
-                  {!s.active && <p style={{ margin: 0, fontSize: "12px", color: "var(--text-muted)" }}>Inactive</p>}
+                  {!s.active && (
+                    <p style={{ margin: 0, fontSize: "12px", color: "var(--text-muted)" }}>Inactive</p>
+                  )}
                 </div>
               </div>
               <div className="staff-row-actions">
-                  {admin && (
-                    <>
-                      <button className="btn btn-ghost" onClick={() => onEdit(s)}>Edit</button>
-                      <button className="btn btn-ghost" onClick={() => onToggle(s)}>
-                        {s.active ? "Deactivate" : "Activate"}
-                      </button>
-                      <button className="btn btn-danger-ghost" onClick={() => onDelete(s.id)}>Delete</button>
-                    </>
-                  )}
-                </div>
+                {admin && (
+                  <>
+                    <button className="btn btn-ghost" onClick={() => onEdit(s)}>Edit</button>
+                    <button className="btn btn-ghost" onClick={() => onToggle(s)}>
+                      {s.active ? "Deactivate" : "Activate"}
+                    </button>
+                    <button className="btn btn-danger-ghost" onClick={() => onDelete(s.id)}>
+                      Delete
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
           ))}
         </div>
