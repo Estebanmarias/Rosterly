@@ -16,6 +16,20 @@ function deptMaxOffPerDay(dept: DeptKey, count: number): number {
   return Math.max(1, Math.floor(count / 2));
 }
 
+// Daily 6pm cap: Kitchen needs at least 2x 3pm, others use floor(working/2)
+function getMax6pmPerDay(dept: DeptKey, working: number): number {
+  if (working <= 0) return 0;
+  if (dept === "kitchen") {
+    // At least 2 must be on 3pm, so max 6pm = working - 2
+    // But if working <= 2, we relax to allow the weekly bucket to work
+    if (working === 1) return 1; // Can be 3pm or 6pm
+    if (working === 2) return 0; // Both must be 3pm (prep requirement)
+    return working - 2; // 3 working = 1x 6pm, 4 working = 2x 6pm, etc.
+  }
+  // All other departments: floor(working/2)
+  return Math.floor(working / 2);
+}
+
 function pickWeightedOffDay(available: DayKey[]): DayKey {
   if (available.length === 1) return available[0];
   
@@ -63,6 +77,7 @@ export function generateRoster(allStaff: Staff[]): RosterMap {
     }
   }
   
+  // Validate capacity
   for (const key of deptKeys) {
     const list = byDept[key];
     if (list.length === 0) continue;
@@ -77,11 +92,13 @@ export function generateRoster(allStaff: Staff[]): RosterMap {
     }
   }
   
+  // Init roster
   const roster: RosterMap = {};
   for (const s of allStaff) {
     roster[s.id] = {} as Record<DayKey, ShiftValue>;
   }
   
+  // Track off counts per dept per day
   const offCount: Record<DeptKey, Record<DayKey, number>> = {
     kitchen: { monday:0, tuesday:0, wednesday:0, thursday:0, friday:0, saturday:0, sunday:0 },
     bar: { monday:0, tuesday:0, wednesday:0, thursday:0, friday:0, saturday:0, sunday:0 },
@@ -90,6 +107,7 @@ export function generateRoster(allStaff: Staff[]): RosterMap {
     waitress: { monday:0, tuesday:0, wednesday:0, thursday:0, friday:0, saturday:0, sunday:0 },
   };
   
+  // --- Step 1: Assign Off days ---
   for (const key of deptKeys) {
     const list = shuffle(byDept[key]);
     if (list.length === 0) continue;
@@ -107,6 +125,7 @@ export function generateRoster(allStaff: Staff[]): RosterMap {
     }
   }
   
+  // --- Step 2: Assign Friday shifts ---
   for (const s of allStaff) {
     if (roster[s.id]["friday"] === SHIFTS.OFF) continue;
     roster[s.id]["friday"] = LATE_FRIDAY_DEPTS.includes(s.department)
@@ -114,28 +133,95 @@ export function generateRoster(allStaff: Staff[]): RosterMap {
       : SHIFTS.MID;
   }
   
+  // Replace Step 3 in rosterAlgorithm.ts with this:
+
+  // --- Step 3: Assign Mon-Sat (excluding Friday) with daily 6pm caps ---
   const workDays = DAYS.filter(d => d !== "friday");
   
-  for (const key of deptKeys) {
-    const list = byDept[key];
-    if (list.length === 0) continue;
-    
-    const isKitchen = key === "kitchen";
-    
-    for (const s of list) {
-      const availableWorkDays = workDays.filter(d => roster[s.id][d] === undefined);
+  // Everyone needs 2× 6pm weekly. Kitchen gets 1 from Friday, 1 from pool.
+  // Others get 0 from Friday (it's 8pm), so 2 from pool.
+  const sixPmNeededFromPool: Record<string, number> = {};
+  for (const s of allStaff) {
+    sixPmNeededFromPool[s.id] = s.department === "kitchen" ? 1 : 2;
+  }
+  
+  // Track how many 6pm assigned from pool so far
+  const poolSixPmCount: Record<string, number> = {};
+  for (const s of allStaff) poolSixPmCount[s.id] = 0;
+  
+  // First pass: calculate available 6pm slots per day and ensure feasibility
+  const daySlots: { day: DayKey; dept: DeptKey; staff: Staff[]; maxSixPm: number }[] = [];
+  
+  for (const day of workDays) {
+    for (const key of deptKeys) {
+      const list = byDept[key];
+      if (list.length === 0) continue;
       
-      if (availableWorkDays.length !== 5) {
-        throw new Error(`${s.name} has ${availableWorkDays.length} work days, expected 5`);
+      const working = list.filter(s => roster[s.id][day] === undefined);
+      if (working.length === 0) continue;
+      
+      const maxSixPm = getMax6pmPerDay(key, working.length);
+      daySlots.push({ day, dept: key, staff: working, maxSixPm });
+    }
+  }
+  
+  // Sort days by fewest slots first (hardest to fill), then assign greedily
+  daySlots.sort((a, b) => a.maxSixPm - b.maxSixPm);
+  
+  for (const slot of daySlots) {
+    const { day, dept, staff: working, maxSixPm } = slot;
+    
+    if (maxSixPm === 0) {
+      // All must be 3pm
+      for (const s of working) {
+        roster[s.id][day] = SHIFTS.OPEN;
       }
+      continue;
+    }
+    
+    // Sort by who needs 6pm most (descending need), shuffle for randomness
+    const shuffled = shuffle(working);
+    shuffled.sort((a, b) => {
+      const needA = sixPmNeededFromPool[a.id] - poolSixPmCount[a.id];
+      const needB = sixPmNeededFromPool[b.id] - poolSixPmCount[b.id];
+      return needB - needA; // Descending (most need first)
+    });
+    
+    // Assign 6pm to those with highest need, up to max allowed
+    let assignedSixPm = 0;
+    for (const s of shuffled) {
+      const stillNeeds = poolSixPmCount[s.id] < sixPmNeededFromPool[s.id];
       
-      const sixPmNeeded = isKitchen ? 1 : 2;
-      
-      const shuffled = shuffle(availableWorkDays);
-      for (let i = 0; i < shuffled.length; i++) {
-        roster[s.id][shuffled[i]] = i < sixPmNeeded ? SHIFTS.MID : SHIFTS.OPEN;
+      if (assignedSixPm < maxSixPm && stillNeeds) {
+        roster[s.id][day] = SHIFTS.MID;
+        poolSixPmCount[s.id]++;
+        assignedSixPm++;
+      } else {
+        roster[s.id][day] = SHIFTS.OPEN;
       }
     }
+  }
+  
+    // --- Step 4: Validate weekly buckets ---
+  for (const s of allStaff) {
+    let offCount = 0, sixPmCount = 0, threePmCount = 0, fridayCount = 0;
+    
+    for (const day of DAYS) {
+      const shift = roster[s.id][day];
+      if (shift === "off") offCount++;
+      if (day === "friday" && shift !== "off") fridayCount++;
+      if (shift === "6pm") sixPmCount++;
+      if (shift === "3pm") threePmCount++;
+    }
+    
+    // Kitchen: Fri=6pm, so 1 from pool. Others: Fri=8pm, so 2 from pool.
+    const expectedSixPm = 2;
+    const expectedThreePm = s.department === "kitchen" ? 4 : 3;
+    
+    if (offCount !== 1) throw new Error(`${s.name}: expected 1 off, got ${offCount}`);
+    if (fridayCount !== 1) throw new Error(`${s.name}: expected 1 Friday shift, got ${fridayCount}`);
+    if (sixPmCount !== expectedSixPm) throw new Error(`${s.name}: expected ${expectedSixPm}× 6pm, got ${sixPmCount}`);
+    if (threePmCount !== expectedThreePm) throw new Error(`${s.name}: expected ${expectedThreePm}× 3pm, got ${threePmCount}`);
   }
   
   return roster;

@@ -7,6 +7,8 @@ import { generateRoster, DAYS } from "@/lib/rosterAlgorithm";
 import { validateOverride } from "@/lib/rosterValidation";
 import { Staff, RosterMap, ShiftValue, DayKey, RosterEntry, Roster, DEPT_LABELS, Department } from "@/types";
 import { useAdmin } from "@/context/AdminContext";
+import html2canvas from "html2canvas";
+import jsPDF from "jspdf";
 
 const SHIFT_CLASS: Record<ShiftValue, string> = {
   "3pm": "shift-3pm", "6pm": "shift-6pm", "8pm": "shift-8pm", "off": "shift-off",
@@ -179,38 +181,74 @@ export default function RosterPage() {
     }
   }
 
-  async function handleSave() {
-  if (!roster) return;
-  setSaving(true); setError(null);
+   async function handleSave() {
+    if (!roster) return;
+    setSaving(true); setError(null);
 
-  // Delete existing roster for this week to avoid duplicates
-  await supabase.from("rosters").delete().eq("week_start", weekStart);
+    // Delete existing roster for this week to avoid duplicates
+    await supabase.from("rosters").delete().eq("week_start", weekStart);
 
-  const { data: rosterRow, error: rErr } = await supabase
-    .from("rosters")
-    .insert({ week_start: weekStart, is_published: false })
-    .select()
-    .single();
+    const { data: rosterRow, error: rErr } = await supabase
+      .from("rosters")
+      .insert({ week_start: weekStart, is_published: true }) // Auto-publish so staff can see
+      .select()
+      .single();
+      
+    if (rErr) { setError(rErr.message); setSaving(false); return; }
+
+    const entries = Object.entries(roster).flatMap(([staffId, days]) =>
+      DAYS.map(day => ({
+        roster_id: rosterRow.id, staff_id: staffId,
+        day, shift: days[day as DayKey], is_manual_override: false,
+      }))
+    );
+
+    const { error: eErr } = await supabase.from("roster_entries").insert(entries);
+    if (eErr) { setError(eErr.message); setSaving(false); return; }
+
+    // Immediately update state to show saved roster
+    setSavedRoster(rosterRow);
+    setSavedEntries(entries as RosterEntry[]);
+    setSaving(false);
     
-  if (rErr) { setError(rErr.message); setSaving(false); return; }
+    // Don't regenerate - keep showing the same roster but now as "saved"
+    // The roster state already has the correct data
+  }
 
-  const entries = Object.entries(roster).flatMap(([staffId, days]) =>
-    DAYS.map(day => ({
-      roster_id: rosterRow.id, staff_id: staffId,
-      day, shift: days[day as DayKey], is_manual_override: false,
-    }))
-  );
+  async function handleExport(format: "png" | "pdf" = "png") {
+    const element = document.getElementById("roster-export");
+    if (!element) return;
 
-  const { error: eErr } = await supabase.from("roster_entries").insert(entries);
-  if (eErr) { setError(eErr.message); setSaving(false); return; }
+    try {
+      const canvas = await html2canvas(element, {
+        scale: 2,
+        backgroundColor: "#ffffff",
+        logging: false,
+      });
 
-  // Update state immediately with the saved roster
-  setSavedRoster(rosterRow);
-  setSaving(false);
-  setTimeout(() => {
-    fetchRosterForWeek(weekStart);
-  }, 100);
-}
+      if (format === "png") {
+        const link = document.createElement("a");
+        link.download = `roster-${weekStart}.png`;
+        link.href = canvas.toDataURL("image/png");
+        link.click();
+      } else {
+        const imgData = canvas.toDataURL("image/png");
+        const pdf = new jsPDF("l", "mm", "a4"); // landscape
+        const pdfWidth = pdf.internal.pageSize.getWidth();
+        const pdfHeight = pdf.internal.pageSize.getHeight();
+        const imgWidth = canvas.width;
+        const imgHeight = canvas.height;
+        const ratio = Math.min(pdfWidth / imgWidth, pdfHeight / imgHeight);
+        const imgX = (pdfWidth - imgWidth * ratio) / 2;
+        const imgY = 10;
+        
+        pdf.addImage(imgData, "PNG", imgX, imgY, imgWidth * ratio, imgHeight * ratio);
+        pdf.save(`roster-${weekStart}.pdf`);
+      }
+    } catch (err) {
+      setError("Export failed. Try again.");
+    }
+  }
 
   const ALL_DEPTS: Department[] = ["kitchen", "bar", "store", "snooker", "waitress"];
   const deptStaff = (d: Department) => staff.filter(s => s.department === d);
@@ -254,11 +292,21 @@ export default function RosterPage() {
               {loading ? "Generating…" : (savedRoster ? "Regenerate" : "Generate")}
             </button>
             
-            {roster && !savedRoster && (
-  <button className="btn btn-secondary" onClick={handleSave} disabled={saving}>
-    {saving ? "Saving…" : "Save roster"}
-  </button>
-          )}
+                        {roster && !savedRoster && (
+              <button className="btn btn-secondary" onClick={handleSave} disabled={saving}>
+                {saving ? "Saving…" : "Save roster"}
+              </button>
+            )}
+            {roster && (
+              <>
+                <button className="btn btn-secondary" onClick={() => handleExport("png")}>
+                  Export PNG
+                </button>
+                <button className="btn btn-secondary" onClick={() => handleExport("pdf")}>
+                  Export PDF
+                </button>
+              </>
+            )}
           {savedRoster && (
             <button 
               className="btn btn-success" 
@@ -312,8 +360,14 @@ export default function RosterPage() {
         </div>
       )}
 
-      {roster && staff.length > 0 && (
-        <div style={{ display: "flex", flexDirection: "column", gap: "2.5rem" }}>
+        {roster && staff.length > 0 && (
+        <div id="roster-export" style={{ 
+          display: "flex", 
+          flexDirection: "column", 
+          gap: "2.5rem",
+          background: "white",
+          padding: "20px",
+        }}>
           {ALL_DEPTS.map(d => (
             <RosterSection key={d} title={DEPT_LABELS[d]} staffList={deptStaff(d)}
               roster={roster} admin={admin} onEdit={handleCellEdit} />
