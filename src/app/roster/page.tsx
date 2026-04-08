@@ -10,6 +10,8 @@ import { useAdmin } from "@/context/AdminContext";
 import html2canvas from "html2canvas";
 import jsPDF from "jspdf";
 
+export const dynamic = "force-dynamic";
+
 const SHIFT_CLASS: Record<ShiftValue, string> = {
   "3pm": "shift-3pm", "6pm": "shift-6pm", "8pm": "shift-8pm", "off": "shift-off",
 };
@@ -441,7 +443,9 @@ function RosterSection({ title, staffList, roster, admin, onEdit }: {
         <h2 style={{ fontSize: "18px", fontWeight: 800, margin: 0 }}>{title}</h2>
         <span style={{ fontSize: "13px", color: "var(--text-muted)", fontWeight: 600 }}>{staffList.length} staff</span>
       </div>
-      <div className="roster-table-wrap">
+
+      {/* Desktop Table */}
+      <div className="roster-table-wrap desktop-only">
         <table className="roster-table">
           <thead>
             <tr>
@@ -493,6 +497,57 @@ function RosterSection({ title, staffList, roster, admin, onEdit }: {
             </tr>
           </tfoot>
         </table>
+      </div>
+
+      {/* Mobile Cards */}
+      <div className="mobile-roster mobile-only">
+        {staffList.map(s => (
+          <div key={s.id} className="roster-card">
+            <div className="roster-card-header">
+              <span className="roster-card-name">{s.name}</span>
+            </div>
+            
+            <div className="roster-card-shifts">
+              {DAYS.map(d => {
+                const shift = roster[s.id]?.[d];
+                if (!shift) return <div key={d} />;
+                return (
+                  <div key={d} className="roster-shift-cell">
+                    <span className="roster-shift-day">{d.slice(0, 2)}</span>
+                    {admin
+                      ? <ShiftPicker value={shift} onChange={v => onEdit(s.id, d, v)} />
+                      : <ShiftBadge value={shift} />
+                    }
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        ))}
+        
+        {/* Mobile Summary */}
+        <div style={{
+          background: "var(--bg-muted)",
+          border: "1.5px solid var(--border)",
+          borderRadius: "var(--radius)",
+          padding: "12px",
+          marginTop: "8px",
+        }}>
+          <p style={{ fontSize: "12px", fontWeight: 700, color: "var(--text-muted)", marginBottom: "8px", textTransform: "uppercase" }}>
+            Daily Coverage
+          </p>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: "4px", textAlign: "center" }}>
+            {DAYS.map(d => {
+              const total = (["3pm","6pm","8pm"] as ShiftValue[]).reduce((sum, sh) => sum + counts[d][sh], 0);
+              return (
+                <div key={d}>
+                  <span style={{ fontSize: "10px", color: "var(--text-muted)" }}>{d.slice(0, 2)}</span>
+                  <span style={{ fontSize: "14px", fontWeight: 800, display: "block" }}>{total}</span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
       </div>
     </div>
   );

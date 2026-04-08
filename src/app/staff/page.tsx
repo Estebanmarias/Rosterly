@@ -79,7 +79,7 @@ export default function StaffPage() {
       {admin && (
         <div className="card" style={{ marginBottom: "2rem" }}>
           <p className="card-title">{editId ? "Edit staff member" : "Add staff member"}</p>
-          <div className="input-row">
+          <div className="input-row form-grid">
             <div className="form-group" style={{ flex: 2 }}>
               <label className="form-label">Name</label>
               <input

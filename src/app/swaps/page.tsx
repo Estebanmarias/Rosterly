@@ -286,7 +286,7 @@ useEffect(() => {
             }}>
               Your schedule this week
             </p>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: "6px", textAlign: "center" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: "6px", textAlign: "center", overflowX: "auto" }}>
               {DAYS.map(day => {
                 const shift = requesterSchedule[day];
                 const isSelected = day === requesterDay;
@@ -384,7 +384,7 @@ useEffect(() => {
           {requester ? `Select a colleague from ${requester.department} to swap with:` : "Select yourself first:"}
         </p>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", marginBottom: "1rem" }}>
+        <div className="form-grid" style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem", marginBottom: "1rem" }}>
           <div className="form-group">
             <label className="form-label">Your name</label>
             <select 
