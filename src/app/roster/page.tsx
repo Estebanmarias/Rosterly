@@ -91,13 +91,57 @@ export default function RosterPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [cellError, setCellError] = useState<string | null>(null);
-  const [weekStart, setWeekStart] = useState<string>(() => {
-    const urlWeek = searchParams.get("week");
-    return urlWeek && weeksList.some(w => w.value === urlWeek) ? urlWeek : getMonday();
-  });
+  const [weekStart, setWeekStart] = useState<string>(getMonday());
+  const [isLoadingWeek, setIsLoadingWeek] = useState(true);
 
   useEffect(() => { fetchStaff(); }, []);
   useEffect(() => { if (staff.length > 0) fetchRosterForWeek(weekStart); }, [staff, weekStart]);
+
+    // Load most recent published roster (any week) or specific week from URL
+  useEffect(() => {
+    async function loadRoster() {
+      const urlWeek = searchParams.get("week");
+      
+      if (urlWeek) {
+        // Load specific week from URL
+        await fetchRosterForWeek(urlWeek);
+        return;
+      }
+      
+      // Otherwise, load most recent published roster (current or future)
+      const { data: latestRoster } = await supabase
+        .from("rosters")
+        .select("*")
+        .eq("is_published", true)
+        .order("week_start", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      
+      if (latestRoster) {
+        setWeekStart(latestRoster.week_start);
+        setSavedRoster(latestRoster);
+        
+        const { data: entries } = await supabase
+          .from("roster_entries")
+          .select("*")
+          .eq("roster_id", latestRoster.id);
+        
+        setSavedEntries(entries as RosterEntry[]);
+        
+        const map: RosterMap = {};
+        for (const e of entries as RosterEntry[]) {
+          if (!map[e.staff_id]) map[e.staff_id] = {} as Record<DayKey, ShiftValue>;
+          map[e.staff_id][e.day] = e.shift;
+        }
+        setRoster(map);
+        
+        // Update URL to match
+        router.push(`?week=${latestRoster.week_start}`, { scroll: false });
+      }
+    }
+    
+    loadRoster();
+  }, []);
 
   async function fetchStaff() {
     const { data, error } = await supabase.from("staff").select("*").eq("active", true);
@@ -181,16 +225,16 @@ export default function RosterPage() {
     }
   }
 
-   async function handleSave() {
+    async function handleSave() {
     if (!roster) return;
     setSaving(true); setError(null);
 
-    // Delete existing roster for this week to avoid duplicates
+       // Delete ALL existing rosters for this week (published and unpublished)
     await supabase.from("rosters").delete().eq("week_start", weekStart);
 
     const { data: rosterRow, error: rErr } = await supabase
       .from("rosters")
-      .insert({ week_start: weekStart, is_published: true }) // Auto-publish so staff can see
+      .insert({ week_start: weekStart, is_published: true })
       .select()
       .single();
       
@@ -206,13 +250,10 @@ export default function RosterPage() {
     const { error: eErr } = await supabase.from("roster_entries").insert(entries);
     if (eErr) { setError(eErr.message); setSaving(false); return; }
 
-    // Immediately update state to show saved roster
+    // Fast state update - no re-fetch needed
     setSavedRoster(rosterRow);
     setSavedEntries(entries as RosterEntry[]);
     setSaving(false);
-    
-    // Don't regenerate - keep showing the same roster but now as "saved"
-    // The roster state already has the correct data
   }
 
   async function handleExport(format: "png" | "pdf" = "png") {
@@ -349,7 +390,7 @@ export default function RosterPage() {
       {error && <div className="alert alert-error">{error}</div>}
       {cellError && <div className="alert alert-warning">{cellError}</div>}
 
-      {!roster && staff.length > 0 && (
+          {!roster && staff.length > 0 && !isLoadingWeek && (
         <div className="card" style={{ textAlign: "center", padding: "3rem" }}>
           <p style={{ color: "var(--text-secondary)", marginBottom: "0.5rem", fontWeight: 600 }}>
             No roster for this week yet.
