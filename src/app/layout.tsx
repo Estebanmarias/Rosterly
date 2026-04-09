@@ -102,14 +102,15 @@ function Topbar() {
             border: "1.5px solid rgba(255,255,255,0.2)",
             borderRadius: "var(--radius-sm)",
             color: admin ? "#ffffff" : "#9ca3af",
-            padding: "5px 12px",
-            fontSize: "13px",
+            padding: "5px 10px",
+            fontSize: "12px",
             fontWeight: 600,
             cursor: "pointer",
             display: "flex",
             alignItems: "center",
-            gap: "6px",
+            gap: "4px",
             transition: "all 0.15s",
+            flexShrink: 0,
           }}
         >
           {admin ? "🔓 Admin" : "🔒 Admin"}

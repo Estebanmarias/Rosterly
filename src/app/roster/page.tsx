@@ -151,35 +151,40 @@ export default function RosterPage() {
     setStaff(data as Staff[]);
   }
 
-  const fetchRosterForWeek = useCallback(async (week: string) => {
-    const { data: rosterRow } = await supabase
-      .from("rosters")
-      .select("*")
-      .eq("week_start", week)
-      .maybeSingle();
-      
-    if (!rosterRow) {
-      setSavedRoster(null);
-      setSavedEntries([]);
-      setRoster(null);
-      return;
-    }
+  // Replace your fetchRosterForWeek with this:
+const fetchRosterForWeek = useCallback(async (week: string) => {
+  setIsLoadingWeek(true);
+  const { data: rosterRow } = await supabase
+    .from("rosters")
+    .select("*")
+    .eq("week_start", week)
+    .maybeSingle();
 
-    const { data: entries } = await supabase
-      .from("roster_entries")
-      .select("*")
-      .eq("roster_id", rosterRow.id);
-      
-    setSavedRoster(rosterRow as Roster);
-    setSavedEntries(entries as RosterEntry[]);
+  if (!rosterRow) {
+    setSavedRoster(null);
+    setSavedEntries([]);
+    setRoster(null);
+    setIsLoadingWeek(false);
+    return;
+  }
 
-    const map: RosterMap = {};
-    for (const e of entries as RosterEntry[]) {
-      if (!map[e.staff_id]) map[e.staff_id] = {} as Record<DayKey, ShiftValue>;
-      map[e.staff_id][e.day] = e.shift;
-    }
-    setRoster(map);
-  }, []);
+  const { data: entries } = await supabase
+    .from("roster_entries")
+    .select("*")
+    .eq("roster_id", rosterRow.id);
+
+  setSavedRoster(rosterRow as Roster);
+  setSavedEntries(entries as RosterEntry[]);
+
+  const map: RosterMap = {};
+  for (const e of entries as RosterEntry[]) {
+    if (!map[e.staff_id]) map[e.staff_id] = {} as Record<DayKey, ShiftValue>;
+    map[e.staff_id][e.day] = e.shift;
+  }
+  setRoster(map);
+  setIsLoadingWeek(false);
+}, []);
+
 
   function handleGenerate() {
     if (savedRoster) {
@@ -310,62 +315,56 @@ export default function RosterPage() {
           </p>
         </div>
 
+        {/* ─── FIX 2: Admin controls — replace your current admin block ────────────── */}
         {admin && (
-          <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <label className="form-label" style={{ whiteSpace: "nowrap" }}>Week</label>
-              <select 
-                value={weekStart} 
+          <div className="admin-controls">
+            <div className="admin-controls-row">
+              <label className="form-label" style={{ whiteSpace: "nowrap", alignSelf: "center" }}>Week</label>
+              <select
+                value={weekStart}
                 onChange={e => {
                   const newWeek = e.target.value;
                   setWeekStart(newWeek);
                   router.push(`?week=${newWeek}`, { scroll: false });
                 }}
-                className="form-select" 
-                style={{ width: "auto", minWidth: "200px" }}
+                className="form-select"
+                style={{ minWidth: "200px" }}
               >
                 {weeksList.map(w => (
                   <option key={w.value} value={w.value}>{w.label}</option>
                 ))}
               </select>
             </div>
-            
-            <button className="btn btn-primary" onClick={handleGenerate}
-              disabled={loading || staff.length === 0}>
-              {loading ? "Generating…" : (savedRoster ? "Regenerate" : "Generate")}
-            </button>
-            
-                        {roster && !savedRoster && (
-              <button className="btn btn-secondary" onClick={handleSave} disabled={saving}>
-                {saving ? "Saving…" : "Save roster"}
+            <div className="admin-controls-row">
+              <button className="btn btn-primary" onClick={handleGenerate}
+                disabled={loading || staff.length === 0}>
+                {loading ? "Generating…" : savedRoster ? "Regenerate" : "Generate"}
               </button>
-            )}
-            {roster && (
-              <>
-                <button className="btn btn-secondary" onClick={() => handleExport("png")}>
-                  Export PNG
+              {roster && !savedRoster && (
+                <button className="btn btn-secondary" onClick={handleSave} disabled={saving}>
+                  {saving ? "Saving…" : "Save roster"}
                 </button>
-                <button className="btn btn-secondary" onClick={() => handleExport("pdf")}>
-                  Export PDF
+              )}
+              {roster && (
+                <>
+                  <button className="btn btn-secondary" onClick={() => handleExport("png")}>PNG</button>
+                  <button className="btn btn-secondary" onClick={() => handleExport("pdf")}>PDF</button>
+                </>
+              )}
+              {savedRoster && (
+                <button
+                  className="btn btn-success"
+                  onClick={async () => {
+                    await supabase.from("rosters").update({ is_published: true }).eq("id", savedRoster.id);
+                    setSavedRoster({ ...savedRoster, is_published: true });
+                  }}
+                  disabled={savedRoster.is_published}
+                  style={{ opacity: savedRoster.is_published ? 0.7 : 1 }}
+                >
+                  {savedRoster.is_published ? "✓ Published" : "Publish"}
                 </button>
-              </>
-            )}
-          {savedRoster && (
-            <button 
-              className="btn btn-success" 
-              onClick={async () => {
-                await supabase.from("rosters").update({ is_published: true }).eq("id", savedRoster.id);
-                setSavedRoster({ ...savedRoster, is_published: true });
-              }}
-              disabled={savedRoster.is_published}
-              style={{ 
-                background: savedRoster.is_published ? "var(--success)" : "var(--primary)",
-                opacity: savedRoster.is_published ? 0.7 : 1 
-              }}
-            >
-              {savedRoster.is_published ? "✓ Published" : "Publish"}
-            </button>
-          )}
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -525,29 +524,39 @@ function RosterSection({ title, staffList, roster, admin, onEdit }: {
           </div>
         ))}
         
-        {/* Mobile Summary */}
-        <div style={{
-          background: "var(--bg-muted)",
-          border: "1.5px solid var(--border)",
-          borderRadius: "var(--radius)",
-          padding: "12px",
-          marginTop: "8px",
-        }}>
-          <p style={{ fontSize: "12px", fontWeight: 700, color: "var(--text-muted)", marginBottom: "8px", textTransform: "uppercase" }}>
-            Daily Coverage
-          </p>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: "4px", textAlign: "center" }}>
-            {DAYS.map(d => {
-              const total = (["3pm","6pm","8pm"] as ShiftValue[]).reduce((sum, sh) => sum + counts[d][sh], 0);
-              return (
-                <div key={d}>
-                  <span style={{ fontSize: "10px", color: "var(--text-muted)" }}>{d.slice(0, 2)}</span>
-                  <span style={{ fontSize: "14px", fontWeight: 800, display: "block" }}>{total}</span>
-                </div>
-              );
-            })}
-          </div>
+      <div style={{
+        background: "var(--bg-muted)",
+        border: "1.5px solid var(--border)",
+        borderRadius: "var(--radius-md)",
+        padding: "12px",
+        marginTop: "8px",
+      }}>
+        <p style={{ fontSize: "12px", fontWeight: 700, color: "var(--text-muted)", marginBottom: "8px", textTransform: "uppercase" }}>
+          Daily Coverage
+        </p>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: "4px", textAlign: "center" }}>
+          {DAYS.map(d => {
+            const total = (["3pm","6pm","8pm"] as ShiftValue[]).reduce((sum, sh) => sum + counts[d][sh], 0);
+            const parts = (["3pm","6pm","8pm"] as ShiftValue[])
+              .filter(sh => counts[d][sh] > 0)
+              .map(sh => `${counts[d][sh]}×${sh}`)
+              .join("\n");
+            return (
+              <div key={d} style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                <span style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", fontWeight: 700 }}>
+                  {d.slice(0, 2)}
+                </span>
+                <span style={{ fontSize: "15px", fontWeight: 800, color: "var(--text-primary)", lineHeight: 1 }}>
+                  {total}
+                </span>
+                <span style={{ fontSize: "9px", color: "var(--text-muted)", whiteSpace: "pre", lineHeight: 1.4 }}>
+                  {parts}
+                </span>
+              </div>
+            );
+          })}
         </div>
+      </div>
       </div>
     </div>
   );
