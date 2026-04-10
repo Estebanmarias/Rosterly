@@ -11,6 +11,9 @@ export interface Staff {
   name: string;
   department: Department;
   active: boolean;
+  on_leave: boolean;
+  leave_start: string | null;
+  leave_end: string | null;
   created_at?: string;
 }
 
@@ -52,9 +55,9 @@ export const LATE_FRIDAY_DEPTS: Department[] = ["bar", "store", "snooker", "wait
 export const EARLY_FRIDAY_DEPTS: Department[] = ["kitchen"];
 
 export const DEPT_LABELS: Record<Department, string> = {
-  kitchen:   "Kitchen",
-  bar:       "Bar",
-  store:     "Store",
-  snooker:   "Snooker",
-  waitress:  "Waitresses",
+  kitchen:  "Kitchen",
+  bar:      "Bar",
+  store:    "Store",
+  snooker:  "Snooker",
+  waitress: "Waitresses",
 };

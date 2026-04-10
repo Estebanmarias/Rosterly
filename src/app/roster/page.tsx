@@ -146,10 +146,11 @@ export default function RosterPage() {
   }, []);
 
   async function fetchStaff() {
-    const { data, error } = await supabase.from("staff").select("*").eq("active", true);
-    if (error) { setError(error.message); return; }
-    setStaff(data as Staff[]);
-  }
+  const { data, error } = await supabase
+    .from("staff").select("*").eq("active", true);
+  if (error) { setError(error.message); return; }
+  setStaff(data as Staff[]);
+}
 
   // Replace your fetchRosterForWeek with this:
 const fetchRosterForWeek = useCallback(async (week: string) => {
@@ -187,19 +188,20 @@ const fetchRosterForWeek = useCallback(async (week: string) => {
 
 
   function handleGenerate() {
-    if (savedRoster) {
-      const ok = confirm("A saved roster exists for this week. Generate new one?");
-      if (!ok) return;
-    }
-    setError(null); setCellError(null); setLoading(true);
-    try {
-      setRoster(generateRoster(staff));
-      setSavedRoster(null);
-      setSavedEntries([]);
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Generation failed.");
-    } finally { setLoading(false); }
+  if (savedRoster) {
+    const ok = confirm("A saved roster exists for this week. Generate new one?");
+    if (!ok) return;
   }
+  setError(null); setCellError(null); setLoading(true);
+  try {
+    const activeStaff = staff.filter(s => !s.on_leave);
+    setRoster(generateRoster(activeStaff));
+    setSavedRoster(null);
+    setSavedEntries([]);
+  } catch (e: unknown) {
+    setError(e instanceof Error ? e.message : "Generation failed.");
+  } finally { setLoading(false); }
+}
 
   function handleCellEdit(staffId: string, day: DayKey, value: ShiftValue) {
     if (!roster) return;
@@ -427,10 +429,13 @@ function RosterSection({ title, staffList, roster, admin, onEdit }: {
 }) {
   if (!staffList.length) return null;
 
+  // Only count working staff in the summary footer
+  const workingList = staffList.filter(s => !s.on_leave);
+
   const counts: Record<DayKey, Record<ShiftValue, number>> = {} as never;
   for (const d of DAYS) {
     counts[d] = { "3pm": 0, "6pm": 0, "8pm": 0, "off": 0 };
-    for (const s of staffList) {
+    for (const s of workingList) {
       const shift = roster[s.id]?.[d];
       if (shift) counts[d][shift]++;
     }
@@ -440,10 +445,14 @@ function RosterSection({ title, staffList, roster, admin, onEdit }: {
     <div>
       <div style={{ display: "flex", alignItems: "baseline", gap: "10px", marginBottom: "1rem" }}>
         <h2 style={{ fontSize: "18px", fontWeight: 800, margin: 0 }}>{title}</h2>
-        <span style={{ fontSize: "13px", color: "var(--text-muted)", fontWeight: 600 }}>{staffList.length} staff</span>
+        <span style={{ fontSize: "13px", color: "var(--text-muted)", fontWeight: 600 }}>
+          {workingList.length} working
+          {staffList.length - workingList.length > 0 &&
+            ` · ${staffList.length - workingList.length} on leave`}
+        </span>
       </div>
 
-      {/* Desktop Table */}
+      {/* Desktop table */}
       <div className="roster-table-wrap desktop-only">
         <table className="roster-table">
           <thead>
@@ -453,23 +462,44 @@ function RosterSection({ title, staffList, roster, admin, onEdit }: {
             </tr>
           </thead>
           <tbody>
-            {staffList.map(s => (
-              <tr key={s.id}>
-                <td>{s.name}</td>
-                {DAYS.map(d => {
-                  const shift = roster[s.id]?.[d];
-                  if (!shift) return <td key={d} />;
-                  return (
-                    <td key={d}>
-                      {admin
-                        ? <ShiftPicker value={shift} onChange={v => onEdit(s.id, d, v)} />
-                        : <ShiftBadge value={shift} />
-                      }
+            {staffList.map(s => {
+              if (s.on_leave) {
+                return (
+                  <tr key={s.id} style={{ opacity: 0.45, background: "var(--bg-muted)" }}>
+                    <td>
+                      <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+                        <span>{s.name}</span>
+                        <span style={{
+                          fontSize: "10px", fontWeight: 700,
+                          background: "#ede9fe", color: "#6d28d9",
+                          padding: "1px 6px", borderRadius: "99px",
+                        }}>on leave</span>
+                      </div>
                     </td>
-                  );
-                })}
-              </tr>
-            ))}
+                    {DAYS.map(d => (
+                      <td key={d} style={{ color: "var(--text-muted)", fontWeight: 600 }}>—</td>
+                    ))}
+                  </tr>
+                );
+              }
+              return (
+                <tr key={s.id}>
+                  <td>{s.name}</td>
+                  {DAYS.map(d => {
+                    const shift = roster[s.id]?.[d];
+                    if (!shift) return <td key={d} />;
+                    return (
+                      <td key={d}>
+                        {admin
+                          ? <ShiftPicker value={shift} onChange={v => onEdit(s.id, d, v)} />
+                          : <ShiftBadge value={shift} />
+                        }
+                      </td>
+                    );
+                  })}
+                </tr>
+              );
+            })}
           </tbody>
           <tfoot>
             <tr style={{ borderTop: "2px solid var(--border-strong)", background: "var(--bg-muted)" }}>
@@ -498,65 +528,86 @@ function RosterSection({ title, staffList, roster, admin, onEdit }: {
         </table>
       </div>
 
-      {/* Mobile Cards */}
+      {/* Mobile cards */}
       <div className="mobile-roster mobile-only">
-        {staffList.map(s => (
-          <div key={s.id} className="roster-card">
-            <div className="roster-card-header">
-              <span className="roster-card-name">{s.name}</span>
-            </div>
-            
-            <div className="roster-card-shifts">
-              {DAYS.map(d => {
-                const shift = roster[s.id]?.[d];
-                if (!shift) return <div key={d} />;
-                return (
-                  <div key={d} className="roster-shift-cell">
-                    <span className="roster-shift-day">{d.slice(0, 2)}</span>
-                    {admin
-                      ? <ShiftPicker value={shift} onChange={v => onEdit(s.id, d, v)} />
-                      : <ShiftBadge value={shift} />
-                    }
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        ))}
-        
-      <div style={{
-        background: "var(--bg-muted)",
-        border: "1.5px solid var(--border)",
-        borderRadius: "var(--radius-md)",
-        padding: "12px",
-        marginTop: "8px",
-      }}>
-        <p style={{ fontSize: "12px", fontWeight: 700, color: "var(--text-muted)", marginBottom: "8px", textTransform: "uppercase" }}>
-          Daily Coverage
-        </p>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: "4px", textAlign: "center" }}>
-          {DAYS.map(d => {
-            const total = (["3pm","6pm","8pm"] as ShiftValue[]).reduce((sum, sh) => sum + counts[d][sh], 0);
-            const parts = (["3pm","6pm","8pm"] as ShiftValue[])
-              .filter(sh => counts[d][sh] > 0)
-              .map(sh => `${counts[d][sh]}×${sh}`)
-              .join("\n");
+        {staffList.map(s => {
+          if (s.on_leave) {
             return (
-              <div key={d} style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
-                <span style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", fontWeight: 700 }}>
-                  {d.slice(0, 2)}
-                </span>
-                <span style={{ fontSize: "15px", fontWeight: 800, color: "var(--text-primary)", lineHeight: 1 }}>
-                  {total}
-                </span>
-                <span style={{ fontSize: "9px", color: "var(--text-muted)", whiteSpace: "pre", lineHeight: 1.4 }}>
-                  {parts}
-                </span>
+              <div key={s.id} className="roster-card" style={{ opacity: 0.5, background: "var(--bg-muted)" }}>
+                <div className="roster-card-header">
+                  <span className="roster-card-name">{s.name}</span>
+                  <span style={{
+                    fontSize: "11px", fontWeight: 700,
+                    background: "#ede9fe", color: "#6d28d9",
+                    padding: "2px 8px", borderRadius: "99px",
+                  }}>On leave</span>
+                </div>
+                <div className="roster-card-shifts">
+                  {DAYS.map(d => (
+                    <div key={d} className="roster-shift-cell">
+                      <span className="roster-shift-day">{d.slice(0, 2)}</span>
+                      <span style={{ fontSize: "13px", color: "var(--text-muted)", fontWeight: 700 }}>—</span>
+                    </div>
+                  ))}
+                </div>
               </div>
             );
-          })}
+          }
+          return (
+            <div key={s.id} className="roster-card">
+              <div className="roster-card-header">
+                <span className="roster-card-name">{s.name}</span>
+              </div>
+              <div className="roster-card-shifts">
+                {DAYS.map(d => {
+                  const shift = roster[s.id]?.[d];
+                  if (!shift) return <div key={d} className="roster-shift-cell" />;
+                  return (
+                    <div key={d} className="roster-shift-cell">
+                      <span className="roster-shift-day">{d.slice(0, 2)}</span>
+                      {admin
+                        ? <ShiftPicker value={shift} onChange={v => onEdit(s.id, d, v)} />
+                        : <ShiftBadge value={shift} />
+                      }
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+
+        {/* Mobile coverage summary */}
+        <div style={{
+          background: "var(--bg-muted)", border: "1.5px solid var(--border)",
+          borderRadius: "var(--radius-md)", padding: "12px", marginTop: "8px",
+        }}>
+          <p style={{ fontSize: "12px", fontWeight: 700, color: "var(--text-muted)", marginBottom: "8px", textTransform: "uppercase" }}>
+            Daily Coverage
+          </p>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: "4px", textAlign: "center" }}>
+            {DAYS.map(d => {
+              const total = (["3pm","6pm","8pm"] as ShiftValue[]).reduce((sum, sh) => sum + counts[d][sh], 0);
+              const parts = (["3pm","6pm","8pm"] as ShiftValue[])
+                .filter(sh => counts[d][sh] > 0)
+                .map(sh => `${counts[d][sh]}×${sh}`)
+                .join("\n");
+              return (
+                <div key={d} style={{ display: "flex", flexDirection: "column", gap: "2px" }}>
+                  <span style={{ fontSize: "10px", color: "var(--text-muted)", textTransform: "uppercase", fontWeight: 700 }}>
+                    {d.slice(0, 2)}
+                  </span>
+                  <span style={{ fontSize: "15px", fontWeight: 800, color: "var(--text-primary)", lineHeight: 1 }}>
+                    {total}
+                  </span>
+                  <span style={{ fontSize: "9px", color: "var(--text-muted)", whiteSpace: "pre", lineHeight: 1.4 }}>
+                    {parts}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
         </div>
-      </div>
       </div>
     </div>
   );
