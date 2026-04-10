@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { generateRoster, DAYS } from "@/lib/rosterAlgorithm";
@@ -18,7 +18,8 @@ const SHIFT_CLASS: Record<ShiftValue, string> = {
 
 const SHIFTS: ShiftValue[] = ["3pm", "6pm", "8pm", "off"];
 
-function ShiftPicker({ value, onChange }: { value: ShiftValue; onChange: (v: ShiftValue) => void }) {
+// ─── ANIMATED SHIFT PILL COMPONENT ───────────────────────────────────────────
+function ShiftPicker({ value, onChange, suggested = false }: { value: ShiftValue; onChange: (v: ShiftValue) => void; suggested?: boolean }) {
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
@@ -31,7 +32,7 @@ function ShiftPicker({ value, onChange }: { value: ShiftValue; onChange: (v: Shi
   return (
     <div style={{ position: "relative", display: "inline-block" }}>
       <button
-        className={`shift-pill ${SHIFT_CLASS[value]}`}
+        className={`shift-pill ${SHIFT_CLASS[value]} ${suggested ? "suggested" : ""}`}
         onClick={e => { e.stopPropagation(); setOpen(o => !o); }}
       >
         {value}
@@ -52,8 +53,45 @@ function ShiftPicker({ value, onChange }: { value: ShiftValue; onChange: (v: Shi
   );
 }
 
-function ShiftBadge({ value }: { value: ShiftValue }) {
-  return <span className={`shift-pill ${SHIFT_CLASS[value]}`} style={{ cursor: "default" }}>{value}</span>;
+function ShiftBadge({ value, suggested = false }: { value: ShiftValue; suggested?: boolean }) {
+  return <span className={`shift-pill ${SHIFT_CLASS[value]} ${suggested ? "suggested" : ""}`} style={{ cursor: "default" }}>{value}</span>;
+}
+
+// ─── STICKY DEPARTMENT HEADER COMPONENT ──────────────────────────────────────
+function StickyDeptHeader({ title, working, onLeave }: {
+  title: string;
+  working: number;
+  onLeave: number;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        el.classList.toggle("is-pinned", !entry.isIntersecting);
+      },
+      { threshold: 1, rootMargin: "-56px 0px 0px 0px" }
+    );
+    // Sentinel sits just above the header
+    const sentinel = document.createElement("div");
+    sentinel.style.height = "1px";
+    el.parentElement?.insertBefore(sentinel, el);
+    observer.observe(sentinel);
+    return () => { observer.disconnect(); sentinel.remove(); };
+  }, []);
+
+  return (
+    <div ref={ref} className="dept-section-header">
+      <div style={{ display: "flex", alignItems: "baseline", gap: "10px" }}>
+        <h2>{title}</h2>
+        <span className="dept-section-meta">
+          {working} working{onLeave > 0 ? ` · ${onLeave} on leave` : ""}
+        </span>
+      </div>
+    </div>
+  );
 }
 
 function getMonday(date = new Date()): string {
@@ -99,7 +137,7 @@ export default function RosterPage() {
   useEffect(() => { fetchStaff(); }, []);
   useEffect(() => { if (staff.length > 0) fetchRosterForWeek(weekStart); }, [staff, weekStart]);
 
-    // Load most recent published roster (any week) or specific week from URL
+  // Load most recent published roster (any week) or specific week from URL
   useEffect(() => {
     async function loadRoster() {
       const urlWeek = searchParams.get("week");
@@ -146,62 +184,60 @@ export default function RosterPage() {
   }, []);
 
   async function fetchStaff() {
-  const { data, error } = await supabase
-    .from("staff").select("*").eq("active", true);
-  if (error) { setError(error.message); return; }
-  setStaff(data as Staff[]);
-}
+    const { data, error } = await supabase
+      .from("staff").select("*").eq("active", true);
+    if (error) { setError(error.message); return; }
+    setStaff(data as Staff[]);
+  }
 
-  // Replace your fetchRosterForWeek with this:
-const fetchRosterForWeek = useCallback(async (week: string) => {
-  setIsLoadingWeek(true);
-  const { data: rosterRow } = await supabase
-    .from("rosters")
-    .select("*")
-    .eq("week_start", week)
-    .maybeSingle();
+  const fetchRosterForWeek = useCallback(async (week: string) => {
+    setIsLoadingWeek(true);
+    const { data: rosterRow } = await supabase
+      .from("rosters")
+      .select("*")
+      .eq("week_start", week)
+      .maybeSingle();
 
-  if (!rosterRow) {
-    setSavedRoster(null);
-    setSavedEntries([]);
-    setRoster(null);
+    if (!rosterRow) {
+      setSavedRoster(null);
+      setSavedEntries([]);
+      setRoster(null);
+      setIsLoadingWeek(false);
+      return;
+    }
+
+    const { data: entries } = await supabase
+      .from("roster_entries")
+      .select("*")
+      .eq("roster_id", rosterRow.id);
+
+    setSavedRoster(rosterRow as Roster);
+    setSavedEntries(entries as RosterEntry[]);
+
+    const map: RosterMap = {};
+    for (const e of entries as RosterEntry[]) {
+      if (!map[e.staff_id]) map[e.staff_id] = {} as Record<DayKey, ShiftValue>;
+      map[e.staff_id][e.day] = e.shift;
+    }
+    setRoster(map);
     setIsLoadingWeek(false);
-    return;
-  }
-
-  const { data: entries } = await supabase
-    .from("roster_entries")
-    .select("*")
-    .eq("roster_id", rosterRow.id);
-
-  setSavedRoster(rosterRow as Roster);
-  setSavedEntries(entries as RosterEntry[]);
-
-  const map: RosterMap = {};
-  for (const e of entries as RosterEntry[]) {
-    if (!map[e.staff_id]) map[e.staff_id] = {} as Record<DayKey, ShiftValue>;
-    map[e.staff_id][e.day] = e.shift;
-  }
-  setRoster(map);
-  setIsLoadingWeek(false);
-}, []);
-
+  }, []);
 
   function handleGenerate() {
-  if (savedRoster) {
-    const ok = confirm("A saved roster exists for this week. Generate new one?");
-    if (!ok) return;
+    if (savedRoster) {
+      const ok = confirm("A saved roster exists for this week. Generate new one?");
+      if (!ok) return;
+    }
+    setError(null); setCellError(null); setLoading(true);
+    try {
+      const activeStaff = staff.filter(s => !s.on_leave);
+      setRoster(generateRoster(activeStaff));
+      setSavedRoster(null);
+      setSavedEntries([]);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Generation failed.");
+    } finally { setLoading(false); }
   }
-  setError(null); setCellError(null); setLoading(true);
-  try {
-    const activeStaff = staff.filter(s => !s.on_leave);
-    setRoster(generateRoster(activeStaff));
-    setSavedRoster(null);
-    setSavedEntries([]);
-  } catch (e: unknown) {
-    setError(e instanceof Error ? e.message : "Generation failed.");
-  } finally { setLoading(false); }
-}
 
   function handleCellEdit(staffId: string, day: DayKey, value: ShiftValue) {
     if (!roster) return;
@@ -234,11 +270,11 @@ const fetchRosterForWeek = useCallback(async (week: string) => {
     }
   }
 
-    async function handleSave() {
+  async function handleSave() {
     if (!roster) return;
     setSaving(true); setError(null);
 
-       // Delete ALL existing rosters for this week (published and unpublished)
+    // Delete ALL existing rosters for this week (published and unpublished)
     await supabase.from("rosters").delete().eq("week_start", weekStart);
 
     const { data: rosterRow, error: rErr } = await supabase
@@ -317,7 +353,6 @@ const fetchRosterForWeek = useCallback(async (week: string) => {
           </p>
         </div>
 
-        {/* ─── FIX 2: Admin controls — replace your current admin block ────────────── */}
         {admin && (
           <div className="admin-controls">
             <div className="admin-controls-row">
@@ -393,7 +428,7 @@ const fetchRosterForWeek = useCallback(async (week: string) => {
       {error && <div className="alert alert-error">{error}</div>}
       {cellError && <div className="alert alert-warning">{cellError}</div>}
 
-          {!roster && staff.length > 0 && !isLoadingWeek && (
+      {!roster && staff.length > 0 && !isLoadingWeek && (
         <div className="card" style={{ textAlign: "center", padding: "3rem" }}>
           <p style={{ color: "var(--text-secondary)", marginBottom: "0.5rem", fontWeight: 600 }}>
             No roster for this week yet.
@@ -404,7 +439,7 @@ const fetchRosterForWeek = useCallback(async (week: string) => {
         </div>
       )}
 
-        {roster && staff.length > 0 && (
+      {roster && staff.length > 0 && (
         <div id="roster-export" style={{ 
           display: "flex", 
           flexDirection: "column", 
@@ -443,14 +478,12 @@ function RosterSection({ title, staffList, roster, admin, onEdit }: {
 
   return (
     <div>
-      <div style={{ display: "flex", alignItems: "baseline", gap: "10px", marginBottom: "1rem" }}>
-        <h2 style={{ fontSize: "18px", fontWeight: 800, margin: 0 }}>{title}</h2>
-        <span style={{ fontSize: "13px", color: "var(--text-muted)", fontWeight: 600 }}>
-          {workingList.length} working
-          {staffList.length - workingList.length > 0 &&
-            ` · ${staffList.length - workingList.length} on leave`}
-        </span>
-      </div>
+      {/* ─── STICKY DEPARTMENT HEADER (REPLACEMENT) ───────────────────────────── */}
+      <StickyDeptHeader
+        title={title}
+        working={workingList.length}
+        onLeave={staffList.length - workingList.length}
+      />
 
       {/* Desktop table */}
       <div className="roster-table-wrap desktop-only">

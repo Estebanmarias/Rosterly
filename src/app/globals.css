@@ -32,6 +32,7 @@
 
   --shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.08), 0 1px 2px -1px rgb(0 0 0 / 0.06);
   --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.07), 0 2px 4px -2px rgb(0 0 0 / 0.05);
+  --shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.08), 0 4px 6px -4px rgb(0 0 0 / 0.05);
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -161,35 +162,193 @@ body {
 .alert-success { background: #f0fdf4; color: #166534; border-color: #bbf7d0; }
 .alert-info    { background: #eff6ff; color: #1e40af; border-color: #bfdbfe; }
 
-/* ── SHIFT PILLS ── */
-.shift-pill { display: inline-block; padding: 4px 10px; border-radius: var(--radius-sm); font-size: 12px; font-weight: 700; cursor: pointer; border: none; min-width: 48px; text-align: center; transition: opacity 0.1s; }
-.shift-pill:hover { opacity: 0.85; }
+/* ══════════════════════════════════════════════
+   SHIFT PILLS — animated micro-interactions
+   ══════════════════════════════════════════════ */
+
+/* Keyframe: gentle breathe for swap suggestions */
+@keyframes pill-suggest {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(79, 70, 229, 0); transform: scale(1); }
+  50%       { box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.18); transform: scale(1.04); }
+}
+
+/* Keyframe: quick pop on click */
+@keyframes pill-pop {
+  0%   { transform: scale(1); }
+  40%  { transform: scale(0.93); }
+  100% { transform: scale(1); }
+}
+
+.shift-pill {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  border: none;
+  min-width: 48px;
+  text-align: center;
+
+  /* Smooth all transitions */
+  transition:
+    transform 0.15s cubic-bezier(0.34, 1.56, 0.64, 1),
+    box-shadow 0.15s ease,
+    opacity 0.1s ease;
+  will-change: transform;
+}
+
+/* Hover — lift + subtle shadow */
+.shift-pill:hover {
+  transform: scale(1.06);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 0.12);
+  opacity: 1;
+}
+
+/* Active/click — quick press-down pop */
+.shift-pill:active {
+  animation: pill-pop 0.18s ease forwards;
+}
+
+/* Focus ring for keyboard nav */
+.shift-pill:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Swap suggestion pulse — add class via JS when showing suggestions */
+.shift-pill.suggested {
+  animation: pill-suggest 2s ease-in-out infinite;
+}
+
+/* Currently selected/active state — accent ring */
+.shift-pill.selected {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
 .shift-3pm { background: var(--shift-3pm-bg); color: var(--shift-3pm-text); }
 .shift-6pm { background: var(--shift-6pm-bg); color: var(--shift-6pm-text); }
 .shift-8pm { background: var(--shift-8pm-bg); color: var(--shift-8pm-text); }
 .shift-off { background: var(--shift-off-bg); color: var(--shift-off-text); }
 
+/* Read-only badges — no hover lift, no cursor */
+.shift-pill[style*="cursor: default"],
+.shift-pill.readonly {
+  cursor: default;
+  pointer-events: none;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
 /* ── DROPDOWN ── */
-.dropdown-menu { position: absolute; top: calc(100% + 4px); left: 0; background: var(--bg); border: 1.5px solid var(--border-strong); border-radius: var(--radius-sm); box-shadow: var(--shadow-md); overflow: hidden; z-index: 20; min-width: 72px; }
-.dropdown-item { display: block; width: 100%; padding: 6px 10px; font-size: 12px; font-weight: 700; text-align: center; border: none; cursor: pointer; transition: opacity 0.1s; }
-.dropdown-item:hover { opacity: 0.8; }
+.dropdown-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  background: var(--bg);
+  border: 1.5px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
+  z-index: 20;
+  min-width: 72px;
+
+  /* Entrance animation */
+  animation: dropdown-in 0.12s ease forwards;
+  transform-origin: top center;
+}
+
+@keyframes dropdown-in {
+  from { opacity: 0; transform: scaleY(0.92) translateY(-4px); }
+  to   { opacity: 1; transform: scaleY(1)    translateY(0); }
+}
+
+.dropdown-item {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  text-align: center;
+  border: none;
+  cursor: pointer;
+  transition: transform 0.1s ease, opacity 0.1s ease;
+}
+.dropdown-item:hover { opacity: 0.82; transform: scale(1.03); }
+.dropdown-item:active { transform: scale(0.97); }
 .dropdown-item.active { outline: 2px solid var(--border-strong); outline-offset: -2px; }
 
-/* ── ROSTER TABLE ── */
-.roster-table-wrap { overflow-x: auto; border: 1.5px solid var(--border); border-radius: var(--radius-lg); box-shadow: var(--shadow-sm); }
+/* ══════════════════════════════════════════════
+   ROSTER TABLE + STICKY DEPARTMENT HEADERS
+   ══════════════════════════════════════════════ */
+.roster-table-wrap {
+  overflow-x: auto;
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
 .roster-table { width: 100%; border-collapse: collapse; font-size: 14px; min-width: 700px; }
 .roster-table thead tr { background: var(--bg-muted); border-bottom: 2px solid var(--border-strong); }
 .roster-table th { padding: 11px 12px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-secondary); text-align: center; }
 .roster-table th:first-child { text-align: left; padding-left: 20px; min-width: 140px; }
-.roster-table tbody tr { border-bottom: 1px solid var(--border); }
+.roster-table tbody tr { border-bottom: 1px solid var(--border); transition: background 0.1s; }
 .roster-table tbody tr:last-child { border-bottom: none; }
 .roster-table tbody tr:hover { background: var(--bg-subtle); }
 .roster-table td { padding: 10px 8px; text-align: center; vertical-align: middle; }
 .roster-table td:first-child { text-align: left; padding-left: 20px; font-weight: 700; font-size: 14px; color: var(--text-primary); }
 
+/* Sticky department section header */
+.dept-section-header {
+  position: sticky;
+  top: 56px; /* sits directly below the 56px topbar */
+  z-index: 30;
+  background: var(--bg);
+  padding: 14px 0 10px;
+  margin-bottom: 0;
+
+  /* Depth shadow appears when pinned (JS toggles .is-pinned) */
+  transition: box-shadow 0.2s ease, background 0.2s ease;
+}
+
+.dept-section-header.is-pinned {
+  background: var(--bg);
+  box-shadow: 0 4px 12px rgb(0 0 0 / 0.07);
+  border-bottom: 1.5px solid var(--border);
+  padding-left: 4px;
+  padding-right: 4px;
+}
+
+.dept-section-header h2 {
+  font-size: 18px;
+  font-weight: 800;
+  margin: 0;
+  transition: font-size 0.2s ease;
+}
+
+/* Slightly compress header text when pinned */
+.dept-section-header.is-pinned h2 { font-size: 15px; }
+
+.dept-section-meta {
+  font-size: 13px;
+  color: var(--text-muted);
+  font-weight: 600;
+  transition: font-size 0.2s ease;
+}
+
+.dept-section-header.is-pinned .dept-section-meta { font-size: 12px; }
+
 /* ── ROSTER MOBILE CARDS ── */
 .mobile-roster { display: flex; flex-direction: column; gap: 12px; }
-.roster-card { background: var(--bg); border: 1.5px solid var(--border); border-radius: var(--radius-lg); padding: 16px; box-shadow: var(--shadow-sm); }
+.roster-card {
+  background: var(--bg);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow 0.15s ease;
+}
+.roster-card:hover { box-shadow: var(--shadow-md); }
 .roster-card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--border); }
 .roster-card-name { font-weight: 700; font-size: 16px; color: var(--text-primary); }
 .roster-card-shifts { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; text-align: center; }
@@ -249,12 +408,10 @@ body {
   .desktop-only { display: none !important; }
   .mobile-only  { display: block !important; }
 
-  /* Page */
   .page, .page-sm { padding: 1rem; }
   .page-header { flex-direction: column; gap: 1rem; }
   .page-title { font-size: 22px; }
 
-  /* Topbar — single compact row */
   .topbar {
     flex-direction: row;
     height: 48px;
@@ -267,31 +424,27 @@ body {
   .topbar-nav { flex: 1; justify-content: center; gap: 2px; padding: 0 6px; }
   .nav-link { padding: 4px 8px; font-size: 12px; }
 
-  /* Stats */
+  /* Sticky header offset on mobile (topbar is 48px) */
+  .dept-section-header { top: 48px; }
+
   .stat-row { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.5rem; }
   .stat-pill { min-width: auto; padding: 8px 12px; }
   .stat-pill-value { font-size: 18px; }
 
-  /* Buttons */
   .btn { padding: 8px 12px; font-size: 13px; }
 
-  /* Admin controls stack */
   .admin-controls { flex-direction: column; align-items: stretch; width: 100%; }
   .admin-controls-row { flex-wrap: wrap; gap: 0.5rem; }
   .admin-controls .form-select { width: 100%; }
 
-  /* Input row */
   .input-row { flex-direction: column; gap: 1rem; }
   .input-row .form-group { width: 100%; }
 
-  /* Staff rows */
   .staff-row { flex-direction: column; align-items: flex-start; gap: 12px; padding: 16px; }
   .staff-row-actions { width: 100%; justify-content: flex-end; }
 
-  /* Swap cards */
   .swap-card { flex-direction: column; align-items: flex-start; gap: 12px; }
 
-  /* Shift pills smaller on mobile */
   .shift-pill { font-size: 10px; padding: 3px 5px; min-width: 34px; }
 }
 
